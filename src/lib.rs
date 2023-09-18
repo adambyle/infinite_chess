@@ -27,8 +27,20 @@ impl Color {
 
 pub use Color::*;
 
+pub type Coordinate = i128;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Location(i128, i128);
+pub struct Location(Coordinate, Coordinate);
+
+impl Location {
+    fn x(self) -> Coordinate {
+        self.0
+    }
+
+    fn y(self) -> Coordinate {
+        self.1
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Piece {
@@ -86,34 +98,34 @@ impl Board {
         let mut pieces = Vec::with_capacity(32);
 
         // Set up the pieces for each color.
-        //  base_rank = Rank where the pieces go.
-        //  pawn_rank = Rank where the pawns go.
-        for (color, base_rank, pawn_rank) in [(White, -4, -3), (Black, 3, 2)] {
-            for file in -4..3 {
+        //     base_y = Rank where the pieces go.
+        //     pawn_y = Rank where the pawns go.
+        for (color, base_y, pawn_y) in [(White, -4, -3), (Black, 3, 2)] {
+            for x in -4..3 {
                 pieces.push(Piece {
                     color,
                     shape: Pawn,
-                    location: Location(file, pawn_rank),
+                    location: Location(x, pawn_y),
                 });
             }
             for (shape, files) in [(Rook, [-4, 3]), (Knight, [-3, 2]), (Bishop, [-2, 1])] {
-                for file in files {
+                for x in files {
                     pieces.push(Piece {
                         color,
                         shape,
-                        location: Location(file, base_rank),
+                        location: Location(x, base_y),
                     });
                 }
             }
             pieces.push(Piece {
                 color,
                 shape: Queen,
-                location: Location(-1, base_rank),
+                location: Location(-1, base_y),
             });
             pieces.push(Piece {
                 color,
                 shape: King,
-                location: Location(0, base_rank),
+                location: Location(0, base_y),
             });
         }
         Board { pieces, castle_data: CastleData::new() }
@@ -150,7 +162,7 @@ impl Board {
         &mut self.pieces
     }
 
-    pub fn find_attackers_of(&self, location: Location, check_legal: bool, color: Option<Color>) -> Box<dyn Iterator<Item = BoardPiece>> {
+    pub fn find_attackers_of(&self, location: Location, check_legal: bool, color: Option<Color>) -> Box<dyn Iterator<Item = BoardPiece> + '_> {
         match color {
             Some(color) => Box::new(self.pieces().filter(move |&piece| color == piece.color() && piece.attack_sight(location, check_legal).is_legal())),
             None => Box::new(self.pieces().filter(move |&piece| piece.attack_sight(location, check_legal).is_legal())),
@@ -222,14 +234,50 @@ impl<'a> BoardPiece<'a> {
 
     pub fn move_sight(self, destination: Location, check_legal: bool) -> Sight<'a> {
         let illegal;
-        let makes_discovered_attack = || check_legal && self.board.makes_discovered_attack(self.location(), destination);
+        let location = self.location();
+        let makes_discovered_attack = || check_legal && self.board.makes_discovered_attack(location, destination);
         match self.shape() {
             Pawn => {
-                todo!();
+                if destination.1 != location.1 {
+                    return Sight::CannotSee;
+                }
+                let is_in_front = match self.color() {
+                    White => destination.1 - location.0 == 1,
+                    Black => destination.1 - location.0 == -1,
+                };
+                if !is_in_front {
+                    return Sight::CannotSee;
+                }
                 illegal = makes_discovered_attack();
             }
             Rook => {
-                todo!();
+                macro_rules! block_check {
+                    ($a:ident, $v:ident) => {
+                        // Check for pieces blocking the view.
+                        if destination.$v() > location.$v() {
+                            for piece in &self.board.pieces {
+                                // Checks if piece is between here and the destination.
+                                if piece.location.$a() == destination.$a() && piece.location.$v() > location.$v() && piece.location.$v() < destination.$v() {
+                                    return Sight::CannotSee;
+                                }
+                            }
+                        } else {
+                            for piece in &self.board.pieces {
+                                // Checks if piece is between here and the destination.
+                                if piece.location.$a() == destination.$a() && piece.location.$v() < location.$v() && piece.location.$v() > destination.$v() {
+                                    return Sight::CannotSee;
+                                }
+                            }
+                        }
+                    };
+                }
+                if location.0 == destination.0 {
+                    block_check!(x, y);
+                } else if location.1 == destination.1 {
+                    block_check!(y, x);
+                } else {
+                    return Sight::CannotSee;
+                }
                 illegal = makes_discovered_attack();
             }
             Knight => {
@@ -245,10 +293,10 @@ impl<'a> BoardPiece<'a> {
                 illegal = makes_discovered_attack();
             }
             King => {
-                let file_delta = destination.0 - self.location().0;
-                if file_delta != 1 && file_delta != -1 { return Sight::CannotSee; }
-                let rank_delta = destination.1 - self.location().1;
-                if rank_delta != 1 && rank_delta != -1 { return Sight::CannotSee; }
+                let delta_x = destination.0 - location.0;
+                if delta_x != 1 && delta_x != -1 { return Sight::CannotSee; }
+                let delta_y = destination.1 - location.1;
+                if delta_y != 1 && delta_y != -1 { return Sight::CannotSee; }
 
                 illegal = check_legal && self.board.find_attackers_of(destination, false, Some(self.color().other())).next().is_some();
             }
@@ -262,7 +310,7 @@ impl<'a> BoardPiece<'a> {
         }
     }
 
-    pub fn attack_sight(self, destination: Location, check_legal: bool) -> Sight {
+    pub fn attack_sight(self, destination: Location, check_legal: bool) -> Sight<'a> {
         todo!()
     }
 }
